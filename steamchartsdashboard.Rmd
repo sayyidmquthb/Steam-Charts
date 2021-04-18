@@ -1,0 +1,204 @@
+---
+title: "Steam Charts Data Visualization"
+author: "Sayyid Muhammad Quthb"
+date: "4/18/2021"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+    theme: sandstone
+    highlight: zenburn
+    df_print: paged
+    code_folding: hide
+---
+
+# Overview
+
+## Brief Introduction
+We will learn to do data visualization based on real life data from the internet. Today, we are going to use Steam Charts dataset. The data is about video games dataset scraped from www.steamcharts.com and uploaded to Kaggle. You can find get the dataset from here : https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-03-16/readme.md#gamescsv.
+It has been informed that the dataset is already clean, so we don't need to clean the data in our process.
+
+## Goal
+Our goal for this chapter is to make adashboard containing interactive charts using Shiny R and deploy it to ShinyApps from Steam Charts dataset. The dashboard is aimed for anyone who has passion in video games, especially for gamers looking for references and game developers who wants to find ideas about gmaes they want to build.
+
+# Data Preparation
+
+Load the required packages.
+
+```{r}
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(zoo)
+library(glue)
+library(plotly)
+library(scales)
+library(RColorBrewer)
+options(scipen = 999)
+```
+
+Load the dataset.
+
+```{r}
+games <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-16/games.csv')
+head(games)
+```
+```{r}
+str(games)
+```
+
+Our data has 83,631 rows and  7 columns. The dataset tells us about the number of games played monthly from 2012 to 2021. The **gamename** column contains names of the games which appeared repeteadly. Moreover, **month** and **year** columns seems to be unsuitable for us to make a time series data. Therefore, we will change **gamename** into factor and transform **month** and **year** into datetime.
+
+```{r}
+games <- games %>% 
+  mutate(tanggal = ymd(paste(year,"-",month,"-01")))
+games$date <- as.yearmon(games$tanggal, "%y%m")
+games <- games %>% 
+  select(tanggal, year, month, date, gamename, avg, gain, peak, avg_peak_perc)%>% 
+  mutate(tanggal = as.Date(games$tanggal, format = "%b %Y"))
+```
+
+# Data Visualization
+
+## Trend Line of Average Players Per Month
+
+Aggregating the data to get average players per game monthly.
+```{r}
+target <- c("Counter-Strike: Global Offensive", "Dota 2")
+agg1 <- games %>% 
+  select(date, year, gamename, avg) %>% 
+  group_by(gamename, date) %>% 
+  filter(gamename %in% target) %>% 
+  summarise(average = mean(avg)) %>%
+  arrange(date, desc(average))
+agg1
+```
+
+Visualize the aggregated data.
+```{r}
+plot1 <- ggplot(data = agg1, aes(x = date, y = average, fill = gamename)) +
+  # geom_area(position = "dodge") +
+  geom_line() +
+  geom_point(size = 1, aes(text = glue("{date}= {average}"))) +
+  labs(x = "",
+       y = "",
+       fill = "Category") +
+  theme_minimal()
+
+ggplotly(plot1, tooltip = "text") %>% 
+  config(displayModeBar = F)
+```
+
+We will make 3 trendlines for 3 selected games in the dahsboard where we choose the unique value of **gamename** as our input in out dashboard.
+
+## Trend Line of Accumulated Players Per Month
+
+Make a cumulative total of average players for each games monthly.
+```{r}
+avgcumtotal <- games %>% 
+  select(date, gamename, avg) %>% 
+  group_by(gamename, date) %>% 
+  summarise(total_avg = sum(avg)) %>% 
+  mutate(cumtotal = cumsum(total_avg)) %>% 
+  filter(gamename == "Dota 2") %>% 
+  head(25)
+avgcumtotal
+```
+
+Visualize the data.
+```{r}
+accum2 <- ggplot(data = avgcumtotal, aes(x = date, y = cumtotal)) +
+    geom_line(aes(linetype = gamename, color = gamename),show.legend = FALSE) +
+    geom_point(size = 0.1, aes(text = glue("{date}: {cumtotal}"))) +
+    theme(legend.position="top") +
+    labs(title = "Player Accumulation Number Over Periods",
+          x = "",
+          y = "") +
+    theme_minimal()
+        
+ggplotly(accum2, tooltip = "text") %>%
+    config(displayModeBar = F)
+```
+
+Note: It is optional.
+
+## Gain Percentage of The Game Per Month
+
+Make a column informing about gain percentage of a game per month.
+```{r}
+gainpercent <- games %>% 
+  select(date, gamename, avg) %>%
+  filter(gamename == "Dota 2") %>% 
+  mutate(gain_percent = (avg/lead(avg)-1)*100) %>% 
+  mutate(gain_percent = round(gain_percent, 1))
+gainpercent
+```
+
+Visualize the data.
+```{r}
+plot2 <- ggplot(gainpercent, aes(x = date, y = gain_percent)) +
+  geom_bar(stat = "identity", aes(fill = gamename, text = glue("{date}: {gain_percent}%"))) + 
+  # geom_text(aes(label = gain_percent,
+  #              vjust = ifelse(gain_percent >= 0, 0, 1))) +
+  scale_y_continuous("Gain Percentage (%)") +
+  labs(title = paste("Gain Percentage of Dota"),
+       y = "",
+       x = "") 
+  # theme(legend.position = "none")
+
+ggplotly(plot2, tooltip = "text") %>% 
+  config(displayModeBar = F)
+```
+
+This barplot will be linked with our trend line plot where there will be 3 gain percentage charts in our dashboard.
+
+## Table of Top 5 Gainers Per Month
+
+Make a column informing about percentage of difference in average compared to the previous month.
+```{r}
+topgainer <- games %>% 
+  select(tanggal, date, gamename, gain, avg) %>%
+  group_by(gamename) %>% 
+  arrange(gamename, date) %>%
+  mutate(gain_percent = (avg/lead(avg)-1)*100) %>% 
+  filter(date == "Jan 2018") %>% 
+  arrange(desc(gain_percent)) %>%
+  mutate(gain_percent = round(gain_percent, 0)) %>%
+  select(gamename, gain_percent) %>% 
+  head(5)
+topgainer
+```
+
+Visualize the data.
+```{r}
+plot5 <- ggplot(topgainer, aes(x = gain_percent, y = reorder(gamename, gain_percent)), color = "green") +
+    geom_col(aes(text = glue("{gain_percent}%"))) +
+    labs(title = "",
+          x = "Gain Percentage (%)",
+          y = "") +
+    guides(fill = FALSE) +
+    theme_minimal()
+        
+ggplotly(plot5, tooltip = "text") %>% 
+    config(displayModeBar = F)
+```
+
+IN our dashboard, the table of top 5 gainers and the chart will be showed in our dahsboard where we can change the date time to find the top 5 gainers for each month.
+
+# Dashboard Deployment
+
+## Preparation
+Before we deploy our result into a dashboard in ShinyApps, we need to construct our data into the right form where we customize **ui.R** , **server.R**, and **global.R** based on our desired form.
+
+## Deployment
+We just need to follow the instructions and our dashboard will be shown afterwards. You can see the result in here:
+https://sayyidmquthb.shinyapps.io/steamcharts/
+
+
+
+
+
+
